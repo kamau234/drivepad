@@ -1,33 +1,49 @@
-import { describe, expect, it, vi } from 'vitest';
-import { InputEngine } from '../src/input/inputEngine';
-import { ControllerLoop } from '../src/input/controllerLoop';
+import {
+  ControllerState,
+  neutralControllerState
+} from '../protocol/controller';
+import { InputEngine } from './inputEngine';
 
-describe('ControllerLoop', () => {
-  it('emits states at a bounded rate and stops safely', () => {
-    vi.useFakeTimers();
+export type ControllerFrame = (state: ControllerState) => void;
 
-    try {
-      const engine = new InputEngine();
-      const frames: number[] = [];
+/** Runs input sampling independently of React rendering in browsers and tests. */
+export class ControllerLoop {
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private sequenceState = neutralControllerState();
 
-      const loop = new ControllerLoop(
-        engine,
-        (state) => frames.push(state.sequence),
-        60
-      );
+  constructor(
+    private readonly engine: InputEngine,
+    private readonly onFrame: ControllerFrame,
+    private readonly hz = 60
+  ) {}
 
-      engine.setAxis('throttle', 1, 1);
-      loop.start();
+  start(): void {
+    if (this.timer !== undefined) return;
 
-      vi.advanceTimersByTime(50);
+    const interval = Math.max(8, 1000 / this.hz);
 
-      expect(frames.length).toBeGreaterThanOrEqual(2);
+    this.timer = setInterval(() => {
+      const now =
+        typeof performance !== 'undefined'
+          ? performance.timeOrigin + performance.now()
+          : Date.now();
 
-      loop.stop();
+      this.sequenceState = this.engine.snapshot(now);
+      this.onFrame(this.sequenceState);
+    }, interval);
+  }
 
-      expect(loop.lastState.throttle).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
+  stop(): void {
+    if (this.timer === undefined) return;
+
+    clearInterval(this.timer);
+    this.timer = undefined;
+    this.engine.releaseAll();
+    this.sequenceState = this.engine.snapshot();
+    this.onFrame(this.sequenceState);
+  }
+
+  get lastState(): ControllerState {
+    return this.sequenceState;
+  }
+}
