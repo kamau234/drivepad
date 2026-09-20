@@ -1,55 +1,107 @@
 import {
+  ControllerPacket,
   ControllerState,
-  DRIVEPAD_PROTOCOL_VERSION,
+  isNewerSequence,
   neutralControllerState
-} from './controller';
+} from '../../src/protocol/controller';
 
-export type BridgePacket = {
-  protocol: number;
-  type: 'state' | 'heartbeat' | 'handshake' | 'pairing' | 'error';
-  sequence?: number;
-  sessionId?: string;
-  timestampMs?: number;
-  state?: ControllerState;
-  code?: string;
-  payload?: string;
+export type WatchdogOptions = {
+  timeoutMs?: number;
+  onRelease: (
+    reason: 'timeout' | 'disconnect' | 'emergency'
+  ) => void;
 };
 
-export function wrapBridgeMessage(packet: BridgePacket): string {
-  return JSON.stringify(packet);
-}
+export class PacketGate {
+  private lastSequence: number | undefined;
 
-export function parseBridgeMessage(payload: string): BridgePacket {
-  const parsed = JSON.parse(payload) as BridgePacket;
+  accept(packet: ControllerPacket): boolean {
+    if (
+      this.lastSequence !== undefined &&
+      !isNewerSequence(packet.sequence, this.lastSequence)
+    ) {
+      return false;
+    }
 
-  if (parsed.protocol !== DRIVEPAD_PROTOCOL_VERSION) {
-    throw new Error('Unsupported bridge protocol version');
+    this.lastSequence = packet.sequence;
+    return true;
   }
 
-  return parsed;
+  reset(): void {
+    this.lastSequence = undefined;
+  }
 }
 
-export function createHandshake(
-  sessionId: string,
-  pcName: string
-): string {
-  return wrapBridgeMessage({
-    protocol: DRIVEPAD_PROTOCOL_VERSION,
-    type: 'handshake',
-    sessionId,
-    payload: `${pcName}:${sessionId}`
-  });
+export class InputWatchdog {
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private active = false;
+  private armed = false;
+  private readonly timeoutMs: number;
+  private readonly onRelease: WatchdogOptions['onRelease'];
+
+  constructor(options: WatchdogOptions) {
+    this.timeoutMs = options.timeoutMs ?? 250;
+    this.onRelease = options.onRelease;
+  }
+
+  arm(): void {
+    this.armed = true;
+    this.refresh();
+  }
+
+  disarm(): void {
+    this.armed = false;
+    this.active = false;
+    this.clearTimer();
+  }
+
+  markPacket(): void {
+    if (!this.armed) return;
+
+    this.active = true;
+    this.refresh();
+  }
+
+  disconnect(): void {
+    this.active = false;
+    this.clearTimer();
+    this.onRelease('disconnect');
+  }
+
+  emergencyRelease(): void {
+    this.active = false;
+    this.clearTimer();
+    this.onRelease('emergency');
+  }
+
+  private refresh(): void {
+    this.clearTimer();
+
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+
+      if (this.armed && this.active) {
+        this.active = false;
+        this.onRelease('timeout');
+      }
+    }, this.timeoutMs);
+  }
+
+  private clearTimer(): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer);
+    }
+
+    this.timer = undefined;
+  }
 }
 
-export function createHeartbeat(
-  sessionId: string,
-  state: ControllerState = neutralControllerState()
-): string {
-  return wrapBridgeMessage({
-    protocol: DRIVEPAD_PROTOCOL_VERSION,
-    type: 'heartbeat',
-    sessionId,
-    state,
-    timestampMs: Date.now()
-  });
+export type BridgeOutput = {
+  apply(state: ControllerState): Promise<void>;
+  releaseAll(): Promise<void>;
+  close(): Promise<void>;
+};
+
+export function neutralOutput(): ControllerState {
+  return neutralControllerState();
 }
