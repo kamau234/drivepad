@@ -1,18 +1,35 @@
-import { ControllerPacket, ControllerState, isNewerSequence, neutralControllerState } from '../../src/protocol/controller';
+import {
+  ControllerPacket,
+  ControllerState,
+  isNewerSequence,
+  neutralControllerState
+} from '../../src/protocol/controller';
 
 export type WatchdogOptions = {
   timeoutMs?: number;
-  onRelease: (reason: 'timeout' | 'disconnect' | 'emergency') => void;
+  onRelease: (
+    reason: 'timeout' | 'disconnect' | 'emergency'
+  ) => void;
 };
 
 export class PacketGate {
   private lastSequence: number | undefined;
-  accept(packet: ControllerPacket) {
-    if (this.lastSequence !== undefined && !isNewerSequence(packet.sequence, this.lastSequence)) return false;
+
+  accept(packet: ControllerPacket): boolean {
+    if (
+      this.lastSequence !== undefined &&
+      !isNewerSequence(packet.sequence, this.lastSequence)
+    ) {
+      return false;
+    }
+
     this.lastSequence = packet.sequence;
     return true;
   }
-  reset() { this.lastSequence = undefined; }
+
+  reset(): void {
+    this.lastSequence = undefined;
+  }
 }
 
 export class InputWatchdog {
@@ -26,16 +43,57 @@ export class InputWatchdog {
     this.timeoutMs = options.timeoutMs ?? 250;
     this.onRelease = options.onRelease;
   }
-  arm() { this.armed = true; this.refresh(); }
-  disarm() { this.armed = false; this.active = false; this.clearTimer(); }
-  markPacket() { if (!this.armed) return; this.active = true; this.refresh(); }
-  disconnect() { this.active = false; this.clearTimer(); this.onRelease('disconnect'); }
-  emergencyRelease() { this.active = false; this.clearTimer(); this.onRelease('emergency'); }
-  private refresh() {
-    this.clearTimer();
-    this.timer = setTimeout(() => { this.timer = undefined; if (this.armed && this.active) { this.active = false; this.onRelease('timeout'); } }, this.timeoutMs);
+
+  arm(): void {
+    this.armed = true;
+    this.refresh();
   }
-  private clearTimer() { if (this.timer !== undefined) clearTimeout(this.timer); this.timer = undefined; }
+
+  disarm(): void {
+    this.armed = false;
+    this.active = false;
+    this.clearTimer();
+  }
+
+  markPacket(): void {
+    if (!this.armed) return;
+
+    this.active = true;
+    this.refresh();
+  }
+
+  disconnect(): void {
+    this.active = false;
+    this.clearTimer();
+    this.onRelease('disconnect');
+  }
+
+  emergencyRelease(): void {
+    this.active = false;
+    this.clearTimer();
+    this.onRelease('emergency');
+  }
+
+  private refresh(): void {
+    this.clearTimer();
+
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+
+      if (this.armed && this.active) {
+        this.active = false;
+        this.onRelease('timeout');
+      }
+    }, this.timeoutMs);
+  }
+
+  private clearTimer(): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer);
+    }
+
+    this.timer = undefined;
+  }
 }
 
 export type BridgeOutput = {
@@ -44,4 +102,6 @@ export type BridgeOutput = {
   close(): Promise<void>;
 };
 
-export function neutralOutput(): ControllerState { return neutralControllerState(); }
+export function neutralOutput(): ControllerState {
+  return neutralControllerState();
+}
