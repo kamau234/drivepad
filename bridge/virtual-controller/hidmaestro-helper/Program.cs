@@ -1,79 +1,263 @@
-using System.Globalization;
-using System.Reflection;
 using System.Text.Json;
 using HIDMaestro;
 
 using var context = new HMContext();
+
 HMController? controller = null;
 
 try
 {
     string? line;
+
     while ((line = Console.ReadLine()) is not null)
     {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            continue;
+        }
+
+        var requestId = TryReadRequestId(line);
+
         try
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
+
             var id = root.GetProperty("id").GetInt32();
             var type = root.GetProperty("type").GetString();
+
             switch (type)
             {
                 case "initialize":
-                    var profileName = root.GetProperty("profile").GetString() ?? "xbox-360-wired";
-                    context.LoadDefaultProfiles();
-                    var profile = context.GetProfile(profileName) ?? throw new InvalidOperationException($"HIDMaestro profile not found: {profileName}");
-                    controller = context.CreateController(profile);
-                    Write(new { id, type = "ready", provider = "hidmaestro", profile = profileName });
+                    Initialize(root, id);
                     break;
+
                 case "apply":
                     EnsureController();
-                    Apply(root.GetProperty("state"));
-                    Write(new { id, type = "ok", operation = "apply" });
+                    ApplyState(root.GetProperty("state"), id);
                     break;
+
                 case "releaseAll":
                     EnsureController();
                     controller!.SubmitState(new HMGamepadState());
-                    Write(new { id, type = "ok", operation = "releaseAll" });
+                    Write(new
+                    {
+                        id,
+                        type = "ok",
+                        operation = "releaseAll"
+                    });
                     break;
+
                 case "close":
-                    controller?.Dispose(); controller = null;
-                    Write(new { id, type = "ok", operation = "close" });
+                    ReleaseAndDispose();
+
+                    Write(new
+                    {
+                        id,
+                        type = "ok",
+                        operation = "close"
+                    });
+
                     return;
-                default: throw new InvalidOperationException($"Unknown helper request: {type}");
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unknown helper request type: {type ?? "<null>"}"
+                    );
             }
         }
         catch (Exception error)
         {
-            Write(new { id = TryGetId(line), type = "error", operation = "request", message = error.Message });
+            Write(new
+            {
+                id = requestId,
+                type = "error",
+                operation = "request",
+                message = error.Message
+            });
         }
     }
 }
 finally
 {
-    controller?.SubmitState(new HMGamepadState());
-    controller?.Dispose();
+    ReleaseAndDispose();
 }
 
-void Apply(JsonElement state)
+void Initialize(JsonElement root, int id)
 {
-    var output = new HMGamepadState();
-    SetUShort(output, "LeftX", Axis(state, "leftStickX", true));
-    SetUShort(output, "LeftY", Axis(state, "leftStickY", true));
-    SetUShort(output, "RightTrigger", Axis(state, "rightTrigger", false));
-    SetUShort(output, "LeftTrigger", Axis(state, "leftTrigger", false));
-    var buttons = typeof(HMButton).GetEnumValues().Cast<HMButton>().Where(button => state.GetProperty("buttons").EnumerateArray().Any(value => value.GetString() == button.ToString())).Aggregate(default(HMButton), (current, button) => current | button);
-    output.Buttons = buttons;
+    if (controller is not null)
+    {
+        throw new InvalidOperationException(
+            "HIDMaestro controller is already initialized"
+        );
+    }
+
+    var profileName =
+        root.TryGetProperty("profile", out var profileElement)
+            ? profileElement.GetString()
+            : null;
+
+    if (profileName != "xbox-360-wired")
+    {
+        throw new InvalidOperationException(
+            "Only the xbox-360-wired profile is supported"
+        );
+    }
+
+    context.LoadDefaultProfiles();
+
+    var profile = context.GetProfile("xbox-360-wired")
+        ?? throw new InvalidOperationException(
+            "xbox-360-wired profile not found"
+        );
+
+    controller = context.CreateController(profile);
+
+    Write(new
+    {
+        id,
+        type = "ready",
+        provider = "hidmaestro",
+        profile = "xbox-360-wired"
+    });
+}
+
+void ApplyState(JsonElement state, int id)
+{
+    var output = new HMGamepadState
+    {
+        LeftX = ToCenteredAxis(
+            state.GetProperty("leftStickX").GetDouble()
+        ),
+        LeftY = ToCenteredAxis(
+            state.GetProperty("leftStickY").GetDouble()
+        ),
+        RightTrigger = ToTrigger(
+            state.GetProperty("rightTrigger").GetDouble()
+        ),
+        LeftTrigger = ToTrigger(
+            state.GetProperty("leftTrigger").GetDouble()
+        ),
+        Buttons = ParseButtons(
+            state.GetProperty("buttons")
+        )
+    };
+
     controller!.SubmitState(output);
+
+    Write(new
+    {
+        id,
+        type = "ok",
+        operation = "apply"
+    });
 }
 
-static ushort Axis(JsonElement state, string name, bool centered) {
-    var value = state.GetProperty(name).GetDouble();
-    value = Math.Clamp(value, centered ? -1 : 0, 1);
-    return (ushort)Math.Round(centered ? (value + 1) * 32767.5 : value * ushort.MaxValue, MidpointRounding.AwayFromZero);
+static ushort ToCenteredAxis(double value)
+{
+    var clamped = Math.Clamp(value, -1.0, 1.0);
+    var normalized = (clamped + 1.0) / 2.0;
+
+    return (ushort)Math.Round(
+        normalized * ushort.MaxValue,
+        MidpointRounding.AwayFromZero
+    );
 }
 
-static void SetUShort(HMGamepadState state, string property, ushort value) => state.GetType().GetProperty(property, BindingFlags.Public | BindingFlags.Instance)?.SetValue(state, value);
-static int TryGetId(string line) { try { return JsonDocument.Parse(line).RootElement.GetProperty("id").GetInt32(); } catch { return 0; } }
-static void Write(object response) => Console.WriteLine(JsonSerializer.Serialize(response));
-void EnsureController() { if (controller is null) throw new InvalidOperationException("HIDMaestro controller is not initialized"); }
+static ushort ToTrigger(double value)
+{
+    var clamped = Math.Clamp(value, 0.0, 1.0);
+
+    return (ushort)Math.Round(
+        clamped * ushort.MaxValue,
+        MidpointRounding.AwayFromZero
+    );
+}
+
+static HMButton ParseButtons(JsonElement buttonsElement)
+{
+    if (buttonsElement.ValueKind != JsonValueKind.Array)
+    {
+        throw new InvalidOperationException(
+            "The buttons field must be an array"
+        );
+    }
+
+    var buttons = HMButton.None;
+
+    foreach (var buttonElement in buttonsElement.EnumerateArray())
+    {
+        var buttonName = buttonElement.GetString();
+
+        if (string.IsNullOrWhiteSpace(buttonName))
+        {
+            throw new InvalidOperationException(
+                "Controller button names must be non-empty strings"
+            );
+        }
+
+        if (!Enum.TryParse<HMButton>(
+                buttonName,
+                ignoreCase: true,
+                out var button))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported HIDMaestro button: {buttonName}"
+            );
+        }
+
+        buttons |= button;
+    }
+
+    return buttons;
+}
+
+void EnsureController()
+{
+    if (controller is null)
+    {
+        throw new InvalidOperationException(
+            "HIDMaestro controller is not initialized"
+        );
+    }
+}
+
+void ReleaseAndDispose()
+{
+    if (controller is null)
+    {
+        return;
+    }
+
+    try
+    {
+        controller.SubmitState(new HMGamepadState());
+    }
+    finally
+    {
+        controller.Dispose();
+        controller = null;
+    }
+}
+
+static int TryReadRequestId(string line)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(line);
+
+        return document.RootElement
+            .GetProperty("id")
+            .GetInt32();
+    }
+    catch
+    {
+        return 0;
+    }
+}
+
+static void Write(object response)
+{
+    Console.WriteLine(JsonSerializer.Serialize(response));
+    Console.Out.Flush();
+}
