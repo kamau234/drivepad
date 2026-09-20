@@ -1,3 +1,4 @@
+import { HidMaestroProvider, HidMaestroProviderOptions } from './hidmaestroProvider';
 import { VirtualControllerProvider } from './provider';
 
 export type ProviderAvailability = {
@@ -7,10 +8,6 @@ export type ProviderAvailability = {
   reason?: string;
 };
 
-/**
- * Provider discovery is deliberately explicit. DRIVEPAD never substitutes a
- * mock provider for a missing Windows driver.
- */
 export interface VirtualControllerProviderFactory {
   describe(): Promise<ProviderAvailability>;
   create(): Promise<VirtualControllerProvider>;
@@ -35,5 +32,41 @@ export class UnavailableProviderFactory implements VirtualControllerProviderFact
 
   async create(): Promise<VirtualControllerProvider> {
     throw new UnavailableProviderError();
+  }
+}
+
+export class HidMaestroProviderFactory implements VirtualControllerProviderFactory {
+  constructor(private readonly options: HidMaestroProviderOptions = {}) {}
+
+  async describe(): Promise<ProviderAvailability> {
+    if (process.platform !== 'win32') {
+      return {
+        id: 'hidmaestro',
+        displayName: 'HIDMaestro Xbox 360 Wired',
+        available: false,
+        reason: 'HIDMaestro is supported only on Windows.'
+      };
+    }
+
+    return {
+      id: 'hidmaestro',
+      displayName: 'HIDMaestro Xbox 360 Wired',
+      available: true,
+      reason: 'The helper and profile are verified during initialization.'
+    };
+  }
+
+  async create(): Promise<VirtualControllerProvider> {
+    const availability = await this.describe();
+    if (!availability.available) throw new UnavailableProviderError(availability.reason);
+
+    const provider = new HidMaestroProvider(this.options);
+    try {
+      await provider.initialize();
+      return provider;
+    } catch (error) {
+      await provider.close().catch(() => undefined);
+      throw new UnavailableProviderError(error instanceof Error ? error.message : String(error));
+    }
   }
 }
