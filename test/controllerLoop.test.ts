@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InputEngine } from '../src/input/inputEngine';
 import { ControllerLoop } from '../src/input/controllerLoop';
 

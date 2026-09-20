@@ -1,5 +1,4 @@
-import { ControllerState, DRIVEPAD_PROTOCOL_VERSION, neutralControllerState } from './protocol/controller';
-import { generatePairingSession } from './connection/transport';
+import { ControllerState, DRIVEPAD_PROTOCOL_VERSION, neutralControllerState } from './controller';
 
 export type BridgePacket = {
   protocol: number;
@@ -18,9 +17,7 @@ export function wrapBridgeMessage(packet: BridgePacket) {
 
 export function parseBridgeMessage(payload: string): BridgePacket {
   const parsed = JSON.parse(payload) as BridgePacket;
-  if (parsed.protocol !== DRIVEPAD_PROTOCOL_VERSION) {
-    throw new Error('Unsupported bridge protocol version');
-  }
+  if (parsed.protocol !== DRIVEPAD_PROTOCOL_VERSION) throw new Error('Unsupported bridge protocol version');
   return parsed;
 }
 

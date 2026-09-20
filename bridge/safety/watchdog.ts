@@ -1,4 +1,4 @@
-import { ControllerPacket, ControllerState, isNewerSequence, neutralControllerState } from '../protocol/controller';
+import { ControllerPacket, ControllerState, isNewerSequence, neutralControllerState } from '../../src/protocol/controller';
 
 export type WatchdogOptions = {
   timeoutMs?: number;
@@ -27,7 +27,7 @@ export class InputWatchdog {
     this.onRelease = options.onRelease;
   }
   arm() { this.armed = true; this.refresh(); }
-  disarm() { this.armed = false; this.active = false; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
+  disarm() { this.armed = false; this.active = false; this.clearTimer(); }
   markPacket() { if (!this.armed) return; this.active = true; this.refresh(); }
   disconnect() { this.active = false; this.clearTimer(); this.onRelease('disconnect'); }
   emergencyRelease() { this.active = false; this.clearTimer(); this.onRelease('emergency'); }
@@ -35,7 +35,7 @@ export class InputWatchdog {
     this.clearTimer();
     this.timer = setTimeout(() => { this.timer = undefined; if (this.armed && this.active) { this.active = false; this.onRelease('timeout'); } }, this.timeoutMs);
   }
-  private clearTimer() { if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
+  private clearTimer() { if (this.timer !== undefined) clearTimeout(this.timer); this.timer = undefined; }
 }
 
 export type BridgeOutput = {
