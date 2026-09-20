@@ -9,6 +9,7 @@ describe('ControllerLoop', () => {
     try {
       const engine = new InputEngine();
       const frames: number[] = [];
+
       const loop = new ControllerLoop(
         engine,
         (state) => frames.push(state.sequence),
