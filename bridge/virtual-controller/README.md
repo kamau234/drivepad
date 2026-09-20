@@ -1,6 +1,6 @@
 # Windows virtual-controller provider
 
-DRIVEPAD does not bundle or silently install a kernel driver. The provider boundary is ready, but a concrete Windows backend must be selected, legally redistributable, actively maintained, and manually verified on the target Windows version before it is enabled.
+DRIVEPAD does not bundle or silently install a kernel driver. The provider boundary is ready, but a concrete Windows backend must be selected, legally redistributable, actively maintained, and verified on a real Windows machine before the bridge enables output.
 
 ## Required provider contract
 
